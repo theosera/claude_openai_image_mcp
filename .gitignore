@@ -1,0 +1,41 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+.vitest/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+.mcp-state/
+
+# Generated images — never commit output artifacts.
+out/
+images/
+*.png
+*.webp
+*.jpeg
+*.jpg
+!fixtures/**
+
+# Secrets / credentials — never commit (defense in depth).
+*.key
+*.pem
+credentials*.json
+service-account*.json
+*token*.json
+secrets/
+secrets.json
+secrets.yaml
+secrets.yml
+
+# Local Claude Code overrides — never shared.
+.claude/settings.local.json
+
+# OAuth session state (future Phase 3) — local-only, never commit.
+*oauth-state*.json

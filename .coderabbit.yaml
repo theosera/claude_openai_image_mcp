@@ -1,0 +1,25 @@
+# CodeRabbit configuration. https://docs.coderabbit.ai/getting-started/configure-coderabbit
+# Minimal, security-focused review for a public MCP server.
+language: en-US
+reviews:
+  profile: assertive
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+  path_instructions:
+    - path: "src/**"
+      instructions: >
+        Flag any code path that could log, serialize, or return the OpenAI API key,
+        the raw prompt text, or image base64 outside the intended MCP image content.
+        Verify size/quality/output_format are validated against the server allowlist
+        BEFORE any provider call. Ensure the mock provider stays the default and no
+        unapproved live OpenAI call / billing is introduced.
+    - path: "tests/**"
+      instructions: >
+        Ensure tests do not perform real network calls and do not embed real secrets.
+chat:
+  auto_reply: true
