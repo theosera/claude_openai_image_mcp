@@ -16,7 +16,8 @@ default (no network, no billing).
 - `src/config.ts` — secret-free `AppConfig` (provider, model, allowlists, defaults). Fail-closed.
 - `src/limits.ts` — numeric bounds (prompt length, timeout, retries, concurrency, image bytes).
 - `src/imageProvider.ts` — `ImageProvider` interface, `MockImageProvider`, `createProvider` factory.
-- `src/openaiImageClient.ts` — Phase 2 skeleton; **not wired**, fails closed.
+- `src/openaiImageClient.ts` — live OpenAI Images call (official SDK). Typed 429/Retry-After/
+  timeout/5xx mapping; injectable `ImagesApi` seam so tests mock-reproduce every branch.
 - `src/providerContract.ts` — plugin contract (`PROVIDER_API_VERSION`, loader, version handshake).
   Exported as `claude-openai-image-mcp/provider`. Fail-closed on any load/handshake error.
 - `src/providerGuard.ts` — uniform guard around EVERY provider: timeout+abort, strict

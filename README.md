@@ -9,9 +9,12 @@ The OpenAI API key is held **server-side only**. The default provider is a
 **mock** that returns a real 1×1 PNG with no network call and no billing, so you
 can wire up and test the whole flow before spending a cent.
 
-> Status: **Phase 1** — repo scaffold, `generate_image` tool, mock provider, CI.
-> The live OpenAI call is a documented skeleton (`src/openaiImageClient.ts`) that
-> fails closed until Phase 2. See [Roadmap](#roadmap).
+> Status: **Phase 2 wired** — the live OpenAI call (`src/openaiImageClient.ts`)
+> is implemented with typed 429/timeout/5xx mapping, and every upstream branch
+> is mock-reproduced in tests. The default provider is still **mock**; a real
+> paid API call happens only when you explicitly set `IMAGE_MCP_PROVIDER=openai`
+> with an `OPENAI_API_KEY`. Real-API E2E evidence is still pending. See
+> [Roadmap](#roadmap).
 
 ## Tool
 
@@ -138,7 +141,8 @@ CI runs the same sequence (`.github/workflows/node.js.yml`) plus CodeQL.
 - **Phase 1 (this repo):** scaffold, `generate_image`, mock provider, CI. ✅
 - **Phase 2:** wire `OpenAIImageProvider` to the official SDK (allowlist,
   timeout, bounded retry, 429/Retry-After/timeout/5xx mapping, byte/MIME checks);
-  mock-reproduce every branch. Real API E2E only after explicit approval.
+  mock-reproduce every branch. ✅ — implemented; **real API E2E still requires
+  explicit approval** (billing) and is the remaining checkbox of this phase.
 - **Phase 3:** Streamable HTTP transport + client→server OAuth (the OpenAI key is
   never forwarded to clients). Note: there is **no** official OpenAI OAuth path to
   call the Images API on a ChatGPT user's behalf — the core stays server-side

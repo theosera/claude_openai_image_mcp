@@ -45,12 +45,9 @@ describe("createProvider", () => {
     await expect(createProvider(cfg, { OPENAI_API_KEY: "   " })).rejects.toThrow(/requires OPENAI_API_KEY/);
   });
 
-  it("builds the openai provider when a key is present, but generate is not wired yet", async () => {
+  it("builds the openai provider when a key is present (no call is made at startup)", async () => {
     const cfg = loadConfig({ IMAGE_MCP_PROVIDER: "openai" });
     const provider = await createProvider(cfg, { OPENAI_API_KEY: "sk-test-should-not-appear" });
     expect(provider.kind).toBe("openai");
-    await expect(provider.generate({ prompt: "x", size: "1024x1024", quality: "low", format: "png" })).rejects.toThrow(
-      /not wired yet/
-    );
   });
 });
