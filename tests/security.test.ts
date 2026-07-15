@@ -41,7 +41,7 @@ describe("no secret / prompt / image bytes in logs during a real call", () => {
     });
 
     const config = loadConfig({ IMAGE_MCP_PROVIDER: "mock" });
-    const provider = createProvider(config, {});
+    const provider = await createProvider(config, {});
     const server = buildMcpServer({ config, provider });
     const [ct, st] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "sec", version: "0.0.0" });
@@ -64,9 +64,24 @@ describe("no secret / prompt / image bytes in logs during a real call", () => {
 });
 
 describe("OpenAI provider never serializes its key", () => {
-  it("keeps the api key out of JSON.stringify", () => {
+  it("keeps the api key out of JSON.stringify", async () => {
     const config = loadConfig({ IMAGE_MCP_PROVIDER: "openai" });
-    const provider = createProvider(config, { OPENAI_API_KEY: "sk-SHOULD-NOT-SERIALIZE-123456" });
+    const provider = await createProvider(config, { OPENAI_API_KEY: "sk-SHOULD-NOT-SERIALIZE-123456" });
     expect(JSON.stringify(provider)).not.toContain("sk-SHOULD-NOT-SERIALIZE-123456");
+  });
+});
+
+describe("redact() covers OAuth-token shapes (plugin lane)", () => {
+  it("scrubs JWTs (base64url), which the standard base64 pattern would miss", () => {
+    const jwt = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ0b2tlbi1ib2R5In0.c2ln-bmF0_dXJl";
+    const out = redact(`token ${jwt} leaked`);
+    expect(out).not.toContain(jwt);
+    expect(out).toContain("***jwt-redacted***");
+  });
+
+  it("scrubs long base64url runs", () => {
+    const blob = "A-b_".repeat(30);
+    const out = redact(`data ${blob} end`);
+    expect(out).not.toContain(blob);
   });
 });

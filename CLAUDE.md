@@ -14,11 +14,15 @@ default (no network, no billing).
 ## Architecture
 
 - `src/config.ts` — secret-free `AppConfig` (provider, model, allowlists, defaults). Fail-closed.
-- `src/limits.ts` — numeric bounds (prompt length, timeout, retries, concurrency).
+- `src/limits.ts` — numeric bounds (prompt length, timeout, retries, concurrency, image bytes).
 - `src/imageProvider.ts` — `ImageProvider` interface, `MockImageProvider`, `createProvider` factory.
 - `src/openaiImageClient.ts` — Phase 2 skeleton; **not wired**, fails closed.
+- `src/providerContract.ts` — plugin contract (`PROVIDER_API_VERSION`, loader, version handshake).
+  Exported as `claude-openai-image-mcp/provider`. Fail-closed on any load/handshake error.
+- `src/providerGuard.ts` — uniform guard around EVERY provider: timeout+abort, strict
+  base64/magic-byte/MIME/size validation, identity pinning, redacted error surfacing.
 - `src/server.ts` — `buildMcpServer` + the single `generate_image` tool (validation/allowlist here).
-- `src/index.ts` — stdio entrypoint. `src/logging.ts` — stderr-only, redacting logger.
+- `src/index.ts` — stdio entrypoint. `src/logging.ts` — stderr-only, redacting logger (keys, base64, JWT).
 
 ## Invariants (do not break)
 
@@ -26,6 +30,11 @@ default (no network, no billing).
 - **Allowlist before provider call.** Validate `size`/`quality`/`output_format` up front; server picks the model.
 - **Logs = metadata only.** No prompt text, no image base64. The logger redacts key/base64 as defense in depth.
 - **Mock stays the default.** No live OpenAI call / billing without explicit user approval.
+- **Plugin lane is opt-in and detachable.** Activation requires BOTH `IMAGE_MCP_PROVIDER=plugin`
+  and `IMAGE_MCP_PROVIDER_MODULE`; no plugin ever becomes a build-time dependency of the core.
+  No automatic fallback between lanes (a broken plugin must never silently bill the API lane).
+- **Provider output is untrusted.** Every provider goes through `providerGuard` (timeout,
+  base64/magic-byte/MIME/size checks, identity pinning, error redaction). Don't bypass it.
 - `.env` and generated images are git-ignored. Only `.env.example` (empty values) is committed.
 
 ## Provisional values

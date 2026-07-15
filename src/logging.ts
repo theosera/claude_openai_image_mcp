@@ -16,9 +16,18 @@ const OPENAI_KEY_PATTERN = /sk-[A-Za-z0-9_-]{16,}/g;
 // A run of base64-ish chars long enough to be encoded image data (not a short
 // id or a normal word). 80+ contiguous base64 chars is effectively always data.
 const LONG_BASE64_PATTERN = /[A-Za-z0-9+/]{80,}={0,2}/g;
+// JWTs (OAuth access/refresh tokens, e.g. from a plugin's error output) use the
+// base64url alphabet (- and _), which the standard-base64 pattern above would
+// miss. Match the eyJ header + dotted segments, plus any long base64url run.
+const JWT_PATTERN = /eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]{8,}){1,2}/g;
+const LONG_BASE64URL_PATTERN = /[A-Za-z0-9_-]{80,}/g;
 
 export function redact(value: string): string {
-  return value.replace(OPENAI_KEY_PATTERN, "sk-***redacted***").replace(LONG_BASE64_PATTERN, "***base64-redacted***");
+  return value
+    .replace(OPENAI_KEY_PATTERN, "sk-***redacted***")
+    .replace(JWT_PATTERN, "***jwt-redacted***")
+    .replace(LONG_BASE64_PATTERN, "***base64-redacted***")
+    .replace(LONG_BASE64URL_PATTERN, "***base64-redacted***");
 }
 
 type Fields = Record<string, string | number | boolean | undefined>;

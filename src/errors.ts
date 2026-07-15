@@ -35,6 +35,11 @@ export function providerUnavailable(message: string): ImageError {
   return new ImageError("provider_unavailable", message);
 }
 
+/** Provider call failed at request time (timeout, invalid output, upstream error). */
+export function providerFailed(message: string): ImageError {
+  return new ImageError("provider_failed", message);
+}
+
 /**
  * Normalize an unknown thrown value into a short, secret-free string. Never
  * returns the raw object (which could carry request bodies / headers with the

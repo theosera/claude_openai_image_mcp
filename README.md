@@ -65,13 +65,15 @@ All configuration is via environment variables (see [`.env.example`](.env.exampl
 
 | Variable                     | Default                              | Purpose                                            |
 | ---------------------------- | ------------------------------------ | -------------------------------------------------- |
-| `IMAGE_MCP_PROVIDER`         | `mock`                               | `mock` (offline) or `openai`                       |
+| `IMAGE_MCP_PROVIDER`         | `mock`                               | `mock` (offline), `openai`, or `plugin`            |
 | `OPENAI_API_KEY`             | —                                    | Required only when provider is `openai`            |
 | `OPENAI_IMAGE_MODEL`         | `gpt-image-2`                        | Server-owned effective model                       |
+| `IMAGE_MCP_PROVIDER_MODULE`  | —                                    | Plugin module specifier (provider `plugin` only)   |
 | `IMAGE_MCP_MAX_PROMPT_CHARS` | `2000`                               | Reject longer prompts                              |
-| `IMAGE_MCP_TIMEOUT_MS`       | `60000`                              | Per-request upstream timeout (Phase 2)             |
+| `IMAGE_MCP_TIMEOUT_MS`       | `60000`                              | Per-request generation timeout (guard-enforced)    |
 | `IMAGE_MCP_MAX_RETRIES`      | `0`                                  | Bounded transient retries (Phase 2)                |
 | `IMAGE_MCP_MAX_CONCURRENCY`  | `1`                                  | Max concurrent generations                         |
+| `IMAGE_MCP_MAX_IMAGE_BYTES`  | `15728640`                           | Max decoded image size accepted from any provider  |
 | `IMAGE_MCP_ALLOWED_SIZES`    | `1024x1024,1536x1024,1024x1536`      | Allowlist                                          |
 | `IMAGE_MCP_ALLOWED_QUALITIES`| `low,medium`                         | Allowlist                                          |
 | `IMAGE_MCP_ALLOWED_FORMATS`  | `png,webp,jpeg`                      | Allowlist                                          |
@@ -85,6 +87,33 @@ All configuration is via environment variables (see [`.env.example`](.env.exampl
 **provisional** — chosen to bound cost and latency and to be confirmed by
 end-to-end evidence. Each carries a review condition in code comments; expect
 them to change as we run real E2E tests.
+
+## Experimental: pluggable provider lane (detachable)
+
+Besides `mock` and `openai`, the server can load an **external provider plugin**
+(e.g. a Codex-CLI-backed lane that generates images inside a ChatGPT
+subscription instead of API billing). The core stays API-key-first; the plugin
+lane is strictly opt-in and **detachable by design**:
+
+- Activation needs **both** `IMAGE_MCP_PROVIDER=plugin` and
+  `IMAGE_MCP_PROVIDER_MODULE=<npm package or path>`. Remove both to detach —
+  the core has no build-time dependency on any plugin.
+- A plugin implements the contract exported at
+  `claude-openai-image-mcp/provider` (`createImageProvider()` +
+  `providerApiVersion`). The server refuses to start on a version mismatch or
+  any load failure (fail-closed).
+- Every provider (plugin or not) runs behind a request-time guard: timeout with
+  abort, strict base64 + magic-byte/MIME validation, decoded-size cap, and
+  redacted error surfacing. A plugin cannot impersonate another lane in
+  `structuredContent`.
+- **There is no automatic fallback between lanes.** If the plugin lane breaks
+  (e.g. an upstream policy change), requests fail with a clear error; switching
+  back to `openai` is a deliberate env change, never implicit billing.
+- **Trust model:** the plugin runs in-process with the server's full
+  privileges. Only install plugins you wrote or audited, and do not keep
+  `OPENAI_API_KEY` in the plugin lane's environment (the server warns if you
+  do). A plugin backend may choose its own model; results report what the
+  plugin actually used (or `unknown`) — the configured model is advisory there.
 
 ## Security
 
@@ -112,7 +141,9 @@ CI runs the same sequence (`.github/workflows/node.js.yml`) plus CodeQL.
   mock-reproduce every branch. Real API E2E only after explicit approval.
 - **Phase 3:** Streamable HTTP transport + client→server OAuth (the OpenAI key is
   never forwarded to clients). Note: there is **no** official OpenAI OAuth path to
-  call the Images API on a ChatGPT user's behalf — server-side API key only.
+  call the Images API on a ChatGPT user's behalf — the core stays server-side
+  API key only. Unofficial subscription-backed lanes live as **external
+  plugins** (see the pluggable provider lane above), at the user's own risk.
 
 ## License
 

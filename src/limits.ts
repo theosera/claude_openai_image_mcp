@@ -17,6 +17,12 @@ export interface Limits {
   maxRetries: number;
   /** Max concurrent in-flight generations. Review: raise once cost per call is understood. */
   maxConcurrency: number;
+  /**
+   * Max DECODED image size in bytes accepted from ANY provider (untrusted-output
+   * bound; enforced by the guard). Review: raise if legitimate high-quality/2K
+   * outputs exceed it in E2E.
+   */
+  maxImageBytes: number;
 }
 
 // Fallbacks used when the corresponding env var is unset/empty. Kept small on
@@ -25,7 +31,8 @@ const DEFAULTS: Limits = {
   maxPromptChars: 2000,
   timeoutMs: 60_000,
   maxRetries: 0,
-  maxConcurrency: 1
+  maxConcurrency: 1,
+  maxImageBytes: 15_728_640 // 15 MiB — provisional; tune from real output sizes.
 };
 
 /** Parse a non-negative integer env override, or fall back. Rejects garbage. */
@@ -55,6 +62,7 @@ export function loadLimits(env: NodeJS.ProcessEnv): Limits {
     maxPromptChars: positiveInt("IMAGE_MCP_MAX_PROMPT_CHARS", env.IMAGE_MCP_MAX_PROMPT_CHARS, DEFAULTS.maxPromptChars),
     timeoutMs: positiveInt("IMAGE_MCP_TIMEOUT_MS", env.IMAGE_MCP_TIMEOUT_MS, DEFAULTS.timeoutMs),
     maxRetries: nonNegativeInt("IMAGE_MCP_MAX_RETRIES", env.IMAGE_MCP_MAX_RETRIES, DEFAULTS.maxRetries),
-    maxConcurrency: positiveInt("IMAGE_MCP_MAX_CONCURRENCY", env.IMAGE_MCP_MAX_CONCURRENCY, DEFAULTS.maxConcurrency)
+    maxConcurrency: positiveInt("IMAGE_MCP_MAX_CONCURRENCY", env.IMAGE_MCP_MAX_CONCURRENCY, DEFAULTS.maxConcurrency),
+    maxImageBytes: positiveInt("IMAGE_MCP_MAX_IMAGE_BYTES", env.IMAGE_MCP_MAX_IMAGE_BYTES, DEFAULTS.maxImageBytes)
   };
 }
