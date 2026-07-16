@@ -118,6 +118,12 @@ lane is strictly opt-in and **detachable by design**:
   do). A plugin backend may choose its own model; results report what the
   plugin actually used (or `unknown`) — the configured model is advisory there.
 
+A reference implementation lives in
+[`packages/codex-plugin-cc`](packages/codex-plugin-cc) — the ChatGPT-subscription
+lane (drives the Codex CLI, no API key). It is a **separate, non-core package**:
+the core never imports it and its build/CI/audit scope excludes it, so it stays
+detachable and does not affect the core's supply chain.
+
 ## Security
 
 The OpenAI key is server-side only and never logged, serialized, or returned.
