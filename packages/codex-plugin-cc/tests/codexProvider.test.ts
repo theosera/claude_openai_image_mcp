@@ -19,10 +19,11 @@ function provider(fixtureName: string, extraEnv: NodeJS.ProcessEnv = {}) {
 }
 
 describe("config", () => {
-  it("defaults to `codex exec --full-auto` and needs no API key", () => {
+  it("defaults to `codex exec --full-auto --skip-git-repo-check` and needs no API key", () => {
     const c = loadCodexConfig("gpt-image-2", {});
     expect(c.command).toBe("codex");
-    expect(c.baseArgs).toEqual(["exec", "--full-auto"]);
+    // --skip-git-repo-check is required: we run codex from a non-repo temp dir.
+    expect(c.baseArgs).toEqual(["exec", "--full-auto", "--skip-git-repo-check"]);
     expect(c.preflightLogin).toBe(false);
   });
 
@@ -31,9 +32,10 @@ describe("config", () => {
     expect(loadCodexConfig("m", { CODEX_PLUGIN_ARGS: "exec --yolo" }).baseArgs).toEqual(["exec", "--yolo"]);
   });
 
-  it("codexChildEnv strips OPENAI_API_KEY (no fallback to API billing)", () => {
-    const env = codexChildEnv({ OPENAI_API_KEY: "sk-should-be-gone", KEEP: "yes" });
+  it("codexChildEnv strips OPENAI_API_KEY and CODEX_API_KEY (no fallback to API billing)", () => {
+    const env = codexChildEnv({ OPENAI_API_KEY: "sk-gone", CODEX_API_KEY: "sk-also-gone", KEEP: "yes" });
     expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(env.CODEX_API_KEY).toBeUndefined();
     expect(env.KEEP).toBe("yes");
   });
 });

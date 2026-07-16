@@ -10,9 +10,13 @@ export interface CodexConfig {
   /** Executable to run. Default "codex". */
   command: string;
   /**
-   * Base args before the prompt. Default ["exec", "--full-auto"]. `codex exec`
-   * is the non-interactive entrypoint; --full-auto lets it write the image file
-   * without an approval prompt. Override per your codex version if needed.
+   * Base args before the prompt. Default
+   * ["exec", "--full-auto", "--skip-git-repo-check"]. `codex exec` is the
+   * non-interactive entrypoint; --full-auto lets it write the image file without
+   * an approval prompt; --skip-git-repo-check is REQUIRED here because we run
+   * codex from a fresh temp scratch dir (not a git repo) and codex exec
+   * otherwise refuses to run outside a repository. Override per your codex
+   * version if needed.
    */
   baseArgs: string[];
   /** Directory under which each request gets a fresh scratch subdir. Default os.tmpdir(). */
@@ -29,14 +33,21 @@ export interface CodexConfig {
   killGraceMs: number;
 }
 
+// API-key auth vars codex honors. Stripped so the subscription lane can never
+// silently fall back to per-image API billing: OPENAI_API_KEY (SDK-style) and
+// CODEX_API_KEY (codex exec's own API-key env var).
+const API_KEY_ENV_VARS = ["OPENAI_API_KEY", "CODEX_API_KEY"] as const;
+
 /**
- * Env handed to the codex child, with OPENAI_API_KEY stripped. The subscription
- * lane must never fall back to per-image API billing, and the key has no
- * business in codex's environment.
+ * Env handed to the codex child, with every API-key auth var stripped. This
+ * lane promises ChatGPT-subscription usage only; leaving a key in the child's
+ * env would let codex authenticate by API key and bill per image.
  */
 export function codexChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const clone = { ...env };
-  delete clone.OPENAI_API_KEY;
+  for (const key of API_KEY_ENV_VARS) {
+    delete clone[key];
+  }
   return clone;
 }
 
@@ -69,7 +80,7 @@ export function loadCodexConfig(
 ): CodexConfig {
   return {
     command: env.CODEX_PLUGIN_COMMAND?.trim() || "codex",
-    baseArgs: splitArgs(env.CODEX_PLUGIN_ARGS, ["exec", "--full-auto"]),
+    baseArgs: splitArgs(env.CODEX_PLUGIN_ARGS, ["exec", "--full-auto", "--skip-git-repo-check"]),
     tmpDir: env.CODEX_PLUGIN_TMPDIR?.trim() || os.tmpdir(),
     modelLabel:
       env.CODEX_PLUGIN_MODEL_LABEL?.trim() ||

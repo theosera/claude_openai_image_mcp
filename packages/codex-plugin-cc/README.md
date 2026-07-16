@@ -33,8 +33,9 @@ the Codex call. What the plugin adds on top of that:
   inherited), so it can't corrupt the host's MCP stdout stream.
 - **abort-safe** — on the host's timeout/cancel signal, the whole Codex process
   group is `SIGTERM`'d then `SIGKILL`'d (no zombie Codex holding your session).
-- **no API-key leakage** — `OPENAI_API_KEY` is stripped from Codex's environment
-  so the subscription lane can never silently fall back to API billing.
+- **no API-key leakage** — `OPENAI_API_KEY` and `CODEX_API_KEY` are stripped
+  from Codex's environment so the subscription lane can never silently fall back
+  to API-key billing.
 - **clear auth failure** — a missing/expired ChatGPT session maps to a
   `codex_not_logged_in` error telling you to run `codex login`.
 - **honest model reporting** — the reported `model` is an advisory label; the
@@ -84,7 +85,7 @@ All via environment variables (see [`.env.example`](.env.example)):
 | Variable                       | Default                 | Purpose                                                     |
 | ------------------------------ | ----------------------- | ---------------------------------------------------------- |
 | `CODEX_PLUGIN_COMMAND`         | `codex`                 | Codex executable (must be logged in)                       |
-| `CODEX_PLUGIN_ARGS`            | `["exec","--full-auto"]`| Base args before the prompt (JSON array or space-separated)|
+| `CODEX_PLUGIN_ARGS`            | `["exec","--full-auto","--skip-git-repo-check"]` | Base args before the prompt (JSON array or space-separated) |
 | `CODEX_PLUGIN_TMPDIR`          | OS temp dir             | Parent of per-request scratch dirs                         |
 | `CODEX_PLUGIN_MODEL_LABEL`     | advisory codex label    | Label reported as the result `model`                       |
 | `CODEX_PLUGIN_PREFLIGHT_LOGIN` | off                     | Run `codex login status` before the first generation (`1`) |
