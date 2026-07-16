@@ -26,6 +26,20 @@ OpenAI Images API. It is designed to fail closed.
   by the server; clients cannot pass a model name.
 - **Bounded cost/latency.** Prompt length, timeout, retries, and concurrency are
   bounded via env (provisional defaults; see README).
+- **Provider output is untrusted.** A uniform guard validates every result
+  (strict base64, magic-byte/MIME match, decoded-size cap) and enforces the
+  request timeout with an abort signal, regardless of provider.
+
+## Plugin lane (experimental)
+
+An external provider plugin (`IMAGE_MCP_PROVIDER=plugin` +
+`IMAGE_MCP_PROVIDER_MODULE`) runs **in-process with full server privileges**.
+It is not sandboxed: install only code you wrote or audited. The version
+handshake (`PROVIDER_API_VERSION`) is a compatibility gate, not a security
+boundary. Plugin failures are surfaced redacted and truncated; plugins cannot
+impersonate the built-in lanes; there is no automatic fallback to the
+API-billing lane. Keep `OPENAI_API_KEY` out of the plugin lane's environment
+(the server warns when both are present).
 
 ## Out of scope (by design, this phase)
 

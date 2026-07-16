@@ -33,24 +33,21 @@ describe("MockImageProvider", () => {
 });
 
 describe("createProvider", () => {
-  it("builds a mock provider without any key", () => {
+  it("builds a mock provider without any key", async () => {
     const cfg = loadConfig({ IMAGE_MCP_PROVIDER: "mock" });
-    const provider = createProvider(cfg, {});
+    const provider = await createProvider(cfg, {});
     expect(provider.kind).toBe("mock");
   });
 
-  it("fails closed when openai is selected without a key (no secret leaked)", () => {
+  it("fails closed when openai is selected without a key (no secret leaked)", async () => {
     const cfg = loadConfig({ IMAGE_MCP_PROVIDER: "openai" });
-    expect(() => createProvider(cfg, {})).toThrow(ImageError);
-    expect(() => createProvider(cfg, { OPENAI_API_KEY: "   " })).toThrow(/requires OPENAI_API_KEY/);
+    await expect(createProvider(cfg, {})).rejects.toThrow(ImageError);
+    await expect(createProvider(cfg, { OPENAI_API_KEY: "   " })).rejects.toThrow(/requires OPENAI_API_KEY/);
   });
 
-  it("builds the openai provider when a key is present, but generate is not wired yet", async () => {
+  it("builds the openai provider when a key is present (no call is made at startup)", async () => {
     const cfg = loadConfig({ IMAGE_MCP_PROVIDER: "openai" });
-    const provider = createProvider(cfg, { OPENAI_API_KEY: "sk-test-should-not-appear" });
+    const provider = await createProvider(cfg, { OPENAI_API_KEY: "sk-test-should-not-appear" });
     expect(provider.kind).toBe("openai");
-    await expect(provider.generate({ prompt: "x", size: "1024x1024", quality: "low", format: "png" })).rejects.toThrow(
-      /not wired yet/
-    );
   });
 });

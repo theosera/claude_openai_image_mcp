@@ -7,7 +7,7 @@ import { buildMcpServer } from "../src/server.js";
 
 async function connect() {
   const config = loadConfig({ IMAGE_MCP_PROVIDER: "mock" });
-  const provider = createProvider(config, {});
+  const provider = await createProvider(config, {});
   const server = buildMcpServer({ config, provider });
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

@@ -8,7 +8,7 @@ import { buildMcpServer } from "./server.js";
 // Fail-closed at startup: loadConfig / createProvider throw (secret-free) on any
 // misconfiguration, so we never expose a half-configured tool over stdio.
 const config = loadConfig();
-const provider = createProvider(config);
+const provider = await createProvider(config);
 
 const server = buildMcpServer({ config, provider });
 await server.connect(new StdioServerTransport());

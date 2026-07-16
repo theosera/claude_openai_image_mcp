@@ -6,7 +6,9 @@ import { type Limits, loadLimits } from "./limits.js";
 // quiet: keep dotenv's banner off stderr — this process speaks MCP on stdio.
 dotenv.config({ quiet: true });
 
-export type ProviderKind = "mock" | "openai";
+// "plugin" is the detachable lane: an external, user-installed module loaded at
+// runtime (never a build-time dependency), selected only by explicit env opt-in.
+export type ProviderKind = "mock" | "openai" | "plugin";
 
 export interface Allowlists {
   sizes: string[];
@@ -27,8 +29,14 @@ export interface Defaults {
  */
 export interface AppConfig {
   provider: ProviderKind;
-  /** Effective model. Server-owned — clients never pass a model name. */
+  /**
+   * Effective model. Server-owned — clients never pass a model name. For the
+   * plugin lane this is ADVISORY: the plugin's backend may pick its own model,
+   * and results report what the plugin actually knows.
+   */
   model: string;
+  /** Module specifier of the provider plugin. Set iff provider is "plugin". */
+  pluginModule?: string;
   limits: Limits;
   allowed: Allowlists;
   defaults: Defaults;
@@ -50,10 +58,10 @@ function splitCsv(value: string | undefined): string[] {
 
 function parseProvider(env: NodeJS.ProcessEnv): ProviderKind {
   const value = env.IMAGE_MCP_PROVIDER?.trim().toLowerCase() || "mock";
-  if (value === "mock" || value === "openai") {
+  if (value === "mock" || value === "openai" || value === "plugin") {
     return value;
   }
-  throw configError(`Invalid IMAGE_MCP_PROVIDER="${env.IMAGE_MCP_PROVIDER}". Use "mock" or "openai".`);
+  throw configError(`Invalid IMAGE_MCP_PROVIDER="${env.IMAGE_MCP_PROVIDER}". Use "mock", "openai", or "plugin".`);
 }
 
 function parseAllowlists(env: NodeJS.ProcessEnv): Allowlists {
@@ -111,7 +119,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const defaults = parseDefaults(env, allowed);
   const limits = loadLimits(env);
 
-  return { provider, model, limits, allowed, defaults };
+  // Fail-closed: the plugin lane needs BOTH opt-ins (provider + module) before
+  // the server will even start. Detaching = removing these two env vars.
+  const pluginModule = env.IMAGE_MCP_PROVIDER_MODULE?.trim() || undefined;
+  if (provider === "plugin" && !pluginModule) {
+    throw configError(
+      "IMAGE_MCP_PROVIDER=plugin requires IMAGE_MCP_PROVIDER_MODULE (module specifier or path of the provider plugin)."
+    );
+  }
+
+  return { provider, model, pluginModule: provider === "plugin" ? pluginModule : undefined, limits, allowed, defaults };
 }
 
 /** Map an output_format to its MIME type for the MCP ImageContent block. */
