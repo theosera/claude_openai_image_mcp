@@ -1,3 +1,4 @@
+import process from "node:process";
 import { type ImageProviderLike, createCodexImageProvider } from "./codexProvider.js";
 import { loadCodexConfig } from "./config.js";
 
@@ -21,7 +22,10 @@ import { loadCodexConfig } from "./config.js";
 export const providerApiVersion = 1;
 
 /** Factory called by the host's loader. `ctx.model` is advisory for this lane. */
-export function createImageProvider(ctx: { model: string }): ImageProviderLike {
-  const config = loadCodexConfig(ctx.model);
+export function createImageProvider(ctx: {
+  model: string;
+  limits?: { maxImageBytes?: number };
+}): ImageProviderLike {
+  const config = loadCodexConfig(ctx.model, process.env, ctx.limits?.maxImageBytes);
   return createCodexImageProvider(config);
 }

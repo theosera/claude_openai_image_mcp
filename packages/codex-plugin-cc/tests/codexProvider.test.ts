@@ -32,10 +32,16 @@ describe("config", () => {
     expect(loadCodexConfig("m", { CODEX_PLUGIN_ARGS: "exec --yolo" }).baseArgs).toEqual(["exec", "--yolo"]);
   });
 
-  it("codexChildEnv strips OPENAI_API_KEY and CODEX_API_KEY (no fallback to API billing)", () => {
-    const env = codexChildEnv({ OPENAI_API_KEY: "sk-gone", CODEX_API_KEY: "sk-also-gone", KEEP: "yes" });
+  it("codexChildEnv strips OPENAI_API_KEY and CODEX_API_KEY, case-insensitively", () => {
+    const env = codexChildEnv({
+      OPENAI_API_KEY: "sk-gone",
+      CODEX_API_KEY: "sk-also-gone",
+      openai_api_key: "sk-lowercase-gone",
+      KEEP: "yes"
+    });
     expect(env.OPENAI_API_KEY).toBeUndefined();
     expect(env.CODEX_API_KEY).toBeUndefined();
+    expect(env.openai_api_key).toBeUndefined();
     expect(env.KEEP).toBe("yes");
   });
 });
@@ -64,6 +70,24 @@ describe("CodexImageProvider.generate", () => {
 
   it("maps a codex run that saves no file to codex_no_image", async () => {
     await expect(provider("fake-codex-no-image.mjs").generate(baseInput)).rejects.toMatchObject({
+      code: "codex_no_image"
+    });
+  });
+
+  it("refuses to follow a symlink written at the output path (codex_no_image)", async () => {
+    await expect(provider("fake-codex-symlink.mjs").generate(baseInput)).rejects.toMatchObject({
+      code: "codex_no_image"
+    });
+  });
+
+  it("rejects an image larger than the size cap before base64 encoding", async () => {
+    // The success fixture writes a ~68-byte PNG; cap at 10 bytes to trip it.
+    const config = loadCodexConfig(
+      "gpt-image-2",
+      { CODEX_PLUGIN_COMMAND: fixture("fake-codex-success.mjs"), CODEX_PLUGIN_ARGS: '["exec"]' },
+      10
+    );
+    await expect(createCodexImageProvider(config).generate(baseInput)).rejects.toMatchObject({
       code: "codex_no_image"
     });
   });
@@ -99,5 +123,30 @@ describe("preflight login check", () => {
     await expect(
       provider("fake-codex-not-logged-in.mjs", { CODEX_PLUGIN_PREFLIGHT_LOGIN: "1" }).generate(baseInput)
     ).rejects.toMatchObject({ code: "codex_not_logged_in" });
+  });
+
+  it("strips API keys from the login-check child (no API-key auth in this lane)", async () => {
+    // The envcheck fixture reports "logged in" only when NO API key is present.
+    // With a key exported here, the preflight must pass only if it was stripped.
+    const prior = { o: process.env.OPENAI_API_KEY, c: process.env.CODEX_API_KEY };
+    process.env.OPENAI_API_KEY = "sk-leftover-should-be-stripped";
+    process.env.CODEX_API_KEY = "sk-also-leftover";
+    try {
+      const config = loadCodexConfig("gpt-image-2", {
+        CODEX_PLUGIN_COMMAND: fixture("fake-codex-login-envcheck.mjs"),
+        CODEX_PLUGIN_PREFLIGHT_LOGIN: "1"
+      });
+      // Login preflight runs and must succeed (keys stripped); generation then
+      // fails codex_no_image because this fixture writes no file — proving the
+      // preflight itself passed.
+      await expect(createCodexImageProvider(config).generate(baseInput)).rejects.toMatchObject({
+        code: "codex_no_image"
+      });
+    } finally {
+      if (prior.o === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = prior.o;
+      if (prior.c === undefined) delete process.env.CODEX_API_KEY;
+      else process.env.CODEX_API_KEY = prior.c;
+    }
   });
 });

@@ -31,22 +31,33 @@ export interface CodexConfig {
   preflightLogin: boolean;
   /** Grace period (ms) between SIGTERM and SIGKILL when the host aborts. Default 2000. */
   killGraceMs: number;
+  /**
+   * Max bytes read from codex's scratch output before base64 encoding. Bounds
+   * plugin memory ahead of the host guard (which only sees the result after we
+   * return). Threaded from the host's IMAGE_MCP_MAX_IMAGE_BYTES.
+   */
+  maxImageBytes: number;
 }
 
-// API-key auth vars codex honors. Stripped so the subscription lane can never
-// silently fall back to per-image API billing: OPENAI_API_KEY (SDK-style) and
-// CODEX_API_KEY (codex exec's own API-key env var).
-const API_KEY_ENV_VARS = ["OPENAI_API_KEY", "CODEX_API_KEY"] as const;
+// API-key auth vars codex honors, matched case-insensitively. Stripped so the
+// subscription lane can never silently fall back to per-image API billing:
+// OPENAI_API_KEY (SDK-style) and CODEX_API_KEY (codex exec's own API-key var).
+const API_KEY_ENV_NAMES = new Set(["OPENAI_API_KEY", "CODEX_API_KEY"]);
+
+const DEFAULT_MAX_IMAGE_BYTES = 15_728_640; // 15 MiB — matches the host default.
 
 /**
- * Env handed to the codex child, with every API-key auth var stripped. This
+ * Env handed to EVERY codex child, with every API-key auth var stripped
+ * (case-insensitively, since env lookup is case-insensitive on Windows). This
  * lane promises ChatGPT-subscription usage only; leaving a key in the child's
  * env would let codex authenticate by API key and bill per image.
  */
 export function codexChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const clone = { ...env };
-  for (const key of API_KEY_ENV_VARS) {
-    delete clone[key];
+  for (const key of Object.keys(clone)) {
+    if (API_KEY_ENV_NAMES.has(key.toUpperCase())) {
+      delete clone[key];
+    }
   }
   return clone;
 }
@@ -71,13 +82,18 @@ function splitArgs(raw: string | undefined, fallback: string[]): string[] {
 }
 
 /**
- * Build config from env. `model` is the host-advertised model (advisory here);
- * CODEX_PLUGIN_MODEL_LABEL overrides the reported label.
+ * Build config from env. `hostModel` is the host-advertised model (advisory
+ * here); `hostMaxImageBytes` is the host's decoded-image limit (threaded from
+ * the plugin factory's ctx.limits). CODEX_PLUGIN_MODEL_LABEL overrides the
+ * reported label; CODEX_PLUGIN_MAX_IMAGE_BYTES overrides the size cap.
  */
 export function loadCodexConfig(
   hostModel: string,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  hostMaxImageBytes: number = DEFAULT_MAX_IMAGE_BYTES
 ): CodexConfig {
+  const envCap = Number.parseInt(env.CODEX_PLUGIN_MAX_IMAGE_BYTES?.trim() ?? "", 10);
+  const maxImageBytes = Number.isInteger(envCap) && envCap > 0 ? envCap : hostMaxImageBytes;
   return {
     command: env.CODEX_PLUGIN_COMMAND?.trim() || "codex",
     baseArgs: splitArgs(env.CODEX_PLUGIN_ARGS, ["exec", "--full-auto", "--skip-git-repo-check"]),
@@ -86,6 +102,7 @@ export function loadCodexConfig(
       env.CODEX_PLUGIN_MODEL_LABEL?.trim() ||
       `gpt-image-2 (codex subscription; backend-decided, advisory host=${hostModel})`,
     preflightLogin: /^(1|true|yes)$/i.test(env.CODEX_PLUGIN_PREFLIGHT_LOGIN?.trim() ?? ""),
-    killGraceMs: 2000
+    killGraceMs: 2000,
+    maxImageBytes
   };
 }

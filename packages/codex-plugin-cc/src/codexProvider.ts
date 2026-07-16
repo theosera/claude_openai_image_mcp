@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { type CodexConfig, codexChildEnv } from "./config.js";
 import { checkCodexLogin, runCodex } from "./codex.js";
@@ -71,15 +72,7 @@ class CodexImageProvider implements ImageProviderLike {
         env: codexChildEnv()
       });
 
-      let bytes: Buffer;
-      try {
-        bytes = await readFile(join(scratchDir, filename));
-      } catch {
-        throw new CodexError(
-          "codex_no_image",
-          `codex finished but did not write "${filename}". The prompt may have been refused, or this codex version saves elsewhere.`
-        );
-      }
+      const bytes = await this.#readImage(join(scratchDir, filename), filename);
 
       return {
         base64: bytes.toString("base64"),
@@ -90,6 +83,40 @@ class CodexImageProvider implements ImageProviderLike {
       };
     } finally {
       await rm(scratchDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Read codex's scratch output as UNTRUSTED data: refuse to follow a symlink
+   * (O_NOFOLLOW), require a regular file, and cap the size BEFORE reading so a
+   * huge or hostile file can't OOM the plugin ahead of the host guard.
+   */
+  async #readImage(filePath: string, filename: string): Promise<Buffer> {
+    let handle;
+    try {
+      // O_NOFOLLOW: opening a symlink at the final component fails (ELOOP).
+      handle = await open(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    } catch {
+      throw new CodexError(
+        "codex_no_image",
+        `codex finished but did not write a regular file "${filename}". The prompt may have been refused, the file may be a symlink, or this codex version saves elsewhere.`
+      );
+    }
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile()) {
+        throw new CodexError("codex_no_image", `codex output "${filename}" is not a regular file.`);
+      }
+      if (stat.size > this.config.maxImageBytes) {
+        throw new CodexError(
+          "codex_no_image",
+          `codex output is ${stat.size} bytes; exceeds the ${this.config.maxImageBytes}-byte cap (IMAGE_MCP_MAX_IMAGE_BYTES).`
+        );
+      }
+      // Regular file within the cap: read exactly its bytes.
+      return await handle.readFile();
+    } finally {
+      await handle.close().catch(() => undefined);
     }
   }
 }

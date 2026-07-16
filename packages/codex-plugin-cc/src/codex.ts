@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import process from "node:process";
-import type { CodexConfig } from "./config.js";
+import { type CodexConfig, codexChildEnv } from "./config.js";
 import { CodexError, looksLikeNotLoggedIn } from "./errors.js";
 
 // Cap captured output so a chatty codex run can't balloon memory. We only ever
@@ -23,11 +23,12 @@ export interface RunCodexResult {
   stderr: string;
 }
 
+// Keep the most RECENT MAX_CAPTURE_BYTES: auth failures and the useful
+// diagnostic tail are emitted at the END of a run, so a sliding window that
+// retains the head would drop exactly what looksLikeNotLoggedIn()/tail() need.
 function appendCapped(buf: string, chunk: Buffer): string {
-  if (buf.length >= MAX_CAPTURE_BYTES) {
-    return buf;
-  }
-  return (buf + chunk.toString("utf8")).slice(0, MAX_CAPTURE_BYTES);
+  const combined = buf + chunk.toString("utf8");
+  return combined.length > MAX_CAPTURE_BYTES ? combined.slice(-MAX_CAPTURE_BYTES) : combined;
 }
 
 /** Best-effort kill of the whole process group (codex may spawn children). */
@@ -167,14 +168,34 @@ export function checkCodexLogin(config: CodexConfig, signal?: AbortSignal): Prom
     let child: ChildProcess;
     try {
       child = spawn(config.command, ["login", "status"], {
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"]
+        // Same API-key stripping as generation: the login check must not be
+        // able to authenticate (or report authed) via a leftover API key.
+        env: codexChildEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true
       });
     } catch (err) {
       reject(new CodexError("codex_not_found", `Could not start "${config.command}": ${short(err)}`));
       return;
     }
+
     let out = "";
+    let settled = false;
+    let killTimer: NodeJS.Timeout | undefined;
+    const cleanup = (): void => {
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = (): void => {
+      if (settled) {
+        return;
+      }
+      killTree(child, "SIGTERM");
+      killTimer = setTimeout(() => killTree(child, "SIGKILL"), config.killGraceMs);
+    };
+
     child.stdout?.on("data", (c: Buffer) => {
       out = appendCapped(out, c);
     });
@@ -182,6 +203,11 @@ export function checkCodexLogin(config: CodexConfig, signal?: AbortSignal): Prom
       out = appendCapped(out, c);
     });
     child.on("error", (err) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
       const code = (err as NodeJS.ErrnoException).code;
       reject(
         code === "ENOENT"
@@ -190,6 +216,15 @@ export function checkCodexLogin(config: CodexConfig, signal?: AbortSignal): Prom
       );
     });
     child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      if (signal?.aborted) {
+        reject(new CodexError("codex_aborted", "codex login check was aborted by the host."));
+        return;
+      }
       // codex login status prints e.g. "Logged in using ChatGPT" when authed.
       if (code === 0 && /logged in/i.test(out) && !looksLikeNotLoggedIn(out)) {
         resolve();
@@ -202,6 +237,8 @@ export function checkCodexLogin(config: CodexConfig, signal?: AbortSignal): Prom
         );
       }
     });
+
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 

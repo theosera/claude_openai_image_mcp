@@ -19,7 +19,7 @@ SDK).
 to save one image into a per-request scratch directory, then reads the file back
 as base64 and returns it as MCP image content.
 
-```
+```text
 host (claude-openai-image-mcp)
   └─ providerGuard  (timeout · base64/MIME/size validation · redaction)
        └─ codex-plugin-cc.generate()
