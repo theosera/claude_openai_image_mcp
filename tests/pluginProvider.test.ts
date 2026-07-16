@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { ImageError } from "../src/errors.js";
 import { MOCK_PNG_BASE64, createProvider } from "../src/imageProvider.js";
+import { loadLimits } from "../src/limits.js";
+import { validateGenerateResult } from "../src/providerGuard.js";
 
 const fixturePath = (name: string): string => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 
@@ -112,6 +114,27 @@ describe("guard: untrusted plugin output at request time", () => {
     await expect(provider.generate(input)).rejects.toThrow(/max is 16/);
   });
 
+  it("R5b: rejects an oversized base64 payload BEFORE decoding it", () => {
+    const limits = { ...loadLimits({}), maxImageBytes: 16 };
+    const oversized = {
+      base64: "AAAA".repeat(100),
+      mimeType: "image/png",
+      model: "m",
+      provider: "plugin",
+      requestId: "r"
+    };
+    // 400 base64 chars bound to at most 300 decoded bytes — rejected pre-decode.
+    expect(() => validateGenerateResult(oversized, limits, "plugin")).toThrow(/at most 300 decoded bytes/);
+  });
+
+  it("R8b: an upstream error quoting the prompt is scrubbed before surfacing", async () => {
+    const provider = await misbehaving();
+    const prompt = "echo-prompt-SECRET-USER-TEXT-42";
+    const failure = provider.generate({ ...input, prompt });
+    await expect(failure).rejects.toThrow(/prompt-redacted/);
+    await expect(provider.generate({ ...input, prompt })).rejects.not.toThrow(/SECRET-USER-TEXT-42/);
+  });
+
   it("R6: a hung plugin is aborted by the core timeout", async () => {
     const provider = await misbehaving({ IMAGE_MCP_TIMEOUT_MS: "50" });
     await expect(provider.generate({ ...input, prompt: "hang" })).rejects.toThrow(/timed out after 50ms/);
@@ -122,6 +145,16 @@ describe("guard: untrusted plugin output at request time", () => {
     const failure = provider.generate({ ...input, prompt: "throw-with-secret" });
     await expect(failure).rejects.toThrow(/jwt-redacted/);
     await expect(provider.generate({ ...input, prompt: "throw-with-secret" })).rejects.not.toThrow(/eyJhbGci/);
+  });
+
+  it("R9b: secret-shaped or prompt-quoting metadata is redacted before structuredContent", async () => {
+    const provider = await misbehaving();
+    const result = await provider.generate({ ...input, prompt: "meta-smuggle" });
+    expect(result.model).not.toContain("sk-abcdefghijklmnop123456");
+    expect(result.model).toContain("sk-***redacted***");
+    expect(result.model).toContain("[prompt-redacted]");
+    expect(result.requestId).not.toContain("A".repeat(120));
+    expect(result.requestId).toContain("base64-redacted");
   });
 
   it("R9: provider identity is server-assigned and metadata is sanitized", async () => {

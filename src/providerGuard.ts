@@ -32,6 +32,23 @@ const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const META_MAX_CHARS = 200;
 const ERROR_MAX_CHARS = 300;
+// Prompts shorter than this are not scrubbed from error text: replacing a
+// 1-3 char substring would mangle unrelated words, and such prompts carry no
+// meaningful secret.
+const MIN_PROMPT_SCRUB_CHARS = 4;
+
+/**
+ * Remove the submitted prompt from an error message. Upstream failures (child
+ * CLI stderr, moderation/validation errors) may quote the prompt verbatim,
+ * which the pattern-based redact() cannot catch — this enforces the
+ * no-prompt-in-logs invariant on the error path.
+ */
+function scrubPrompt(message: string, prompt: string): string {
+  if (prompt.length >= MIN_PROMPT_SCRUB_CHARS && message.includes(prompt)) {
+    return message.split(prompt).join("[prompt-redacted]");
+  }
+  return message;
+}
 
 function magicBytesMatch(bytes: Buffer, mimeType: string): boolean {
   switch (mimeType) {
@@ -50,17 +67,31 @@ function magicBytesMatch(bytes: Buffer, mimeType: string): boolean {
   }
 }
 
-/** Strip control characters and cap length for metadata echoed to clients/logs. */
-function sanitizeMeta(value: unknown): string {
+/**
+ * Sanitize metadata echoed to clients/logs (structuredContent): redact
+ * secret-shaped content, suppress the prompt, strip control characters, and
+ * cap length. A provider must not be able to smuggle keys/JWTs/base64/prompt
+ * text out through model/requestId fields.
+ */
+function sanitizeMeta(value: unknown, prompt: string): string {
   if (typeof value !== "string") {
     return "";
   }
+  const scrubbed = redact(scrubPrompt(value, prompt));
   // eslint-disable-next-line no-control-regex
-  return value.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, META_MAX_CHARS);
+  return scrubbed.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, META_MAX_CHARS);
 }
 
-/** Validate untrusted provider output; throws provider_failed on any violation. */
-export function validateGenerateResult(raw: unknown, limits: Limits, providerKind: string): GenerateResult {
+/**
+ * Validate untrusted provider output; throws provider_failed on any violation.
+ * `prompt` (when provided) is suppressed from metadata echoed back to clients.
+ */
+export function validateGenerateResult(
+  raw: unknown,
+  limits: Limits,
+  providerKind: string,
+  prompt = ""
+): GenerateResult {
   if (typeof raw !== "object" || raw === null) {
     throw providerFailed(`Provider "${providerKind}" returned a non-object result.`);
   }
@@ -74,6 +105,17 @@ export function validateGenerateResult(raw: unknown, limits: Limits, providerKin
   const base64 = result.base64;
   if (typeof base64 !== "string" || base64.length === 0 || base64.length % 4 !== 0 || !STRICT_BASE64.test(base64)) {
     throw providerFailed(`Provider "${providerKind}" returned malformed base64 image data.`);
+  }
+
+  // Bound the allocation BEFORE decoding (4 base64 chars decode to at most 3
+  // bytes) so an absurdly large payload cannot OOM/stall the process while
+  // being decoded just to be rejected afterwards.
+  const maxDecodedBytes = (base64.length / 4) * 3;
+  if (maxDecodedBytes > limits.maxImageBytes) {
+    throw providerFailed(
+      `Provider "${providerKind}" returned a base64 payload of at most ${maxDecodedBytes} decoded bytes; ` +
+        `max is ${limits.maxImageBytes} (IMAGE_MCP_MAX_IMAGE_BYTES).`
+    );
   }
 
   const bytes = Buffer.from(base64, "base64");
@@ -92,10 +134,10 @@ export function validateGenerateResult(raw: unknown, limits: Limits, providerKin
   return {
     base64,
     mimeType,
-    model: sanitizeMeta(result.model) || "unknown",
+    model: sanitizeMeta(result.model, prompt) || "unknown",
     // Identity is server-assigned — a plugin cannot claim another lane's name.
     provider: providerKind as GenerateResult["provider"],
-    requestId: sanitizeMeta(result.requestId) || "unknown"
+    requestId: sanitizeMeta(result.requestId, prompt) || "unknown"
   };
 }
 
@@ -120,12 +162,15 @@ class GuardedImageProvider implements ImageProvider {
       generation.catch(() => undefined);
 
       const raw = await Promise.race([generation, timeoutRejection(controller.signal, this.limits.timeoutMs)]);
-      return validateGenerateResult(raw, this.limits, this.inner.kind);
+      return validateGenerateResult(raw, this.limits, this.inner.kind, input.prompt);
     } catch (err) {
       if (err instanceof ImageError) {
-        throw err;
+        // Typed errors are safe by construction EXCEPT for upstream text they
+        // may embed (which can quote the prompt) — scrub before rethrowing.
+        throw new ImageError(err.code, redact(scrubPrompt(err.message, input.prompt)).slice(0, ERROR_MAX_CHARS));
       }
-      const message = redact(err instanceof Error ? err.message : String(err)).slice(0, ERROR_MAX_CHARS);
+      const raw = err instanceof Error ? err.message : String(err);
+      const message = redact(scrubPrompt(raw, input.prompt)).slice(0, ERROR_MAX_CHARS);
       throw providerFailed(`Provider "${this.inner.kind}" failed: ${message}`);
     } finally {
       clearTimeout(timer);

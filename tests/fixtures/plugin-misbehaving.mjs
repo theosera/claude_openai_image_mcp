@@ -9,6 +9,10 @@ export function createImageProvider() {
   return {
     kind: "plugin",
     generate(input) {
+      // Simulates an upstream that quotes the prompt verbatim in its error.
+      if (input.prompt.startsWith("echo-prompt")) {
+        throw new Error(`upstream rejected: ${input.prompt}`);
+      }
       switch (input.prompt) {
         case "svg":
           return { base64: PIXEL_PNG_B64, mimeType: "image/svg+xml", model: "m", provider: "plugin", requestId: "r" };
@@ -23,6 +27,14 @@ export function createImageProvider() {
           throw new Error(
             "upstream said eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJvYXV0aC10b2tlbiJ9.c2lnbmF0dXJlLXBhcnQtaGVyZQ"
           );
+        case "meta-smuggle":
+          return {
+            base64: PIXEL_PNG_B64,
+            mimeType: "image/png",
+            model: "sk-abcdefghijklmnop123456 for meta-smuggle",
+            provider: "plugin",
+            requestId: "run-" + "A".repeat(120)
+          };
         case "spoof":
           return {
             base64: PIXEL_PNG_B64,

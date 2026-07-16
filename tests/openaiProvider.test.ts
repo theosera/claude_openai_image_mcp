@@ -125,6 +125,19 @@ describe("OpenAIImageProvider behind the guard", () => {
     expect(result.mimeType).toBe("image/png");
   });
 
+  it("scrubs the prompt when a typed upstream error echoes it", async () => {
+    const prompt = "SECRET-USER-PROMPT-42";
+    const err = OpenAI.APIError.generate(
+      400,
+      { error: { message: `bad prompt: ${prompt}` } },
+      `bad prompt: ${prompt}`,
+      new Headers()
+    );
+    const guarded = guardProvider(makeProvider(failingApi(err)), limits);
+    await expect(guarded.generate({ ...input, prompt })).rejects.toThrow(/prompt-redacted/);
+    await expect(guarded.generate({ ...input, prompt })).rejects.not.toThrow(new RegExp(prompt));
+  });
+
   it("rejects upstream bytes that do not match the requested format", async () => {
     // Valid base64, but not a PNG — the guard must fail closed even though the
     // upstream call "succeeded".
