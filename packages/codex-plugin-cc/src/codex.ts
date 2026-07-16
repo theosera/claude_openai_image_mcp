@@ -1,0 +1,219 @@
+import { type ChildProcess, spawn } from "node:child_process";
+import process from "node:process";
+import type { CodexConfig } from "./config.js";
+import { CodexError, looksLikeNotLoggedIn } from "./errors.js";
+
+// Cap captured output so a chatty codex run can't balloon memory. We only ever
+// need a tail for diagnostics; the image itself is written to a file, not stdout.
+const MAX_CAPTURE_BYTES = 64 * 1024;
+const DIAG_TAIL_CHARS = 400;
+
+export interface RunCodexOptions {
+  command: string;
+  args: string[];
+  cwd: string;
+  /** Host-provided abort signal (providerGuard fires this on timeout/cancel). */
+  signal?: AbortSignal;
+  killGraceMs: number;
+  env: NodeJS.ProcessEnv;
+}
+
+export interface RunCodexResult {
+  stdout: string;
+  stderr: string;
+}
+
+function appendCapped(buf: string, chunk: Buffer): string {
+  if (buf.length >= MAX_CAPTURE_BYTES) {
+    return buf;
+  }
+  return (buf + chunk.toString("utf8")).slice(0, MAX_CAPTURE_BYTES);
+}
+
+/** Best-effort kill of the whole process group (codex may spawn children). */
+function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) {
+    return;
+  }
+  try {
+    // Negative pid targets the process group (child was spawned detached).
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/**
+ * Spawn `codex` non-interactively and wait for it to finish. Guarantees:
+ *  - stdio is PIPED, never inherited (protects the host's MCP stdout on stdio);
+ *  - on abort, the whole process group is SIGTERM'd then SIGKILL'd after a grace
+ *    period (no zombie codex holding the ChatGPT session);
+ *  - a missing binary and a not-logged-in state map to distinct typed errors.
+ */
+export function runCodex(options: RunCodexOptions): Promise<RunCodexResult> {
+  const { command, args, cwd, signal, killGraceMs, env } = options;
+
+  return new Promise<RunCodexResult>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new CodexError("codex_aborted", "Request aborted before codex started."));
+      return;
+    }
+
+    let child: ChildProcess;
+    try {
+      child = spawn(command, args, {
+        cwd,
+        env,
+        // No stdin, pipe out/err. detached so we can signal the whole group.
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true
+      });
+    } catch (err) {
+      reject(new CodexError("codex_not_found", `Could not start "${command}": ${short(err)}`));
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let killTimer: NodeJS.Timeout | undefined;
+
+    const cleanup = (): void => {
+      if (killTimer) {
+        clearTimeout(killTimer);
+      }
+      signal?.removeEventListener("abort", onAbort);
+    };
+
+    const onAbort = (): void => {
+      if (settled) {
+        return;
+      }
+      killTree(child, "SIGTERM");
+      killTimer = setTimeout(() => killTree(child, "SIGKILL"), killGraceMs);
+      // Do not settle here; wait for "close" so the SIGKILL path is honored.
+    };
+
+    child.stdout?.on("data", (c: Buffer) => {
+      stdout = appendCapped(stdout, c);
+    });
+    child.stderr?.on("data", (c: Buffer) => {
+      stderr = appendCapped(stderr, c);
+    });
+
+    child.on("error", (err) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      // ENOENT here means the binary was not found.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        reject(new CodexError("codex_not_found", `codex binary "${command}" not found on PATH.`));
+      } else {
+        reject(new CodexError("codex_failed", `codex process error: ${short(err)}`));
+      }
+    });
+
+    child.on("close", (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+
+      if (signal?.aborted) {
+        reject(new CodexError("codex_aborted", "codex was aborted by the host (timeout or cancellation)."));
+        return;
+      }
+      const combined = `${stdout}\n${stderr}`;
+      if (looksLikeNotLoggedIn(combined)) {
+        reject(
+          new CodexError(
+            "codex_not_logged_in",
+            "codex has no ChatGPT session. Run `codex login` (subscription lane needs an interactive login)."
+          )
+        );
+        return;
+      }
+      if (code !== 0) {
+        reject(new CodexError("codex_failed", `codex exited with code ${code ?? "null"}. ${tail(stderr)}`));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Optional preflight: run `codex login status` and fail closed if there is no
+ * ChatGPT session. This surfaces the one failure mode no architecture can
+ * automate away — an expired/absent subscription login needs a human to run
+ * `codex login` — as a clear error before we spend a generation attempt.
+ */
+export function checkCodexLogin(config: CodexConfig, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new CodexError("codex_aborted", "Request aborted before codex login check."));
+      return;
+    }
+    let child: ChildProcess;
+    try {
+      child = spawn(config.command, ["login", "status"], {
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+    } catch (err) {
+      reject(new CodexError("codex_not_found", `Could not start "${config.command}": ${short(err)}`));
+      return;
+    }
+    let out = "";
+    child.stdout?.on("data", (c: Buffer) => {
+      out = appendCapped(out, c);
+    });
+    child.stderr?.on("data", (c: Buffer) => {
+      out = appendCapped(out, c);
+    });
+    child.on("error", (err) => {
+      const code = (err as NodeJS.ErrnoException).code;
+      reject(
+        code === "ENOENT"
+          ? new CodexError("codex_not_found", `codex binary "${config.command}" not found on PATH.`)
+          : new CodexError("codex_failed", `codex login check error: ${short(err)}`)
+      );
+    });
+    child.on("close", (code) => {
+      // codex login status prints e.g. "Logged in using ChatGPT" when authed.
+      if (code === 0 && /logged in/i.test(out) && !looksLikeNotLoggedIn(out)) {
+        resolve();
+      } else {
+        reject(
+          new CodexError(
+            "codex_not_logged_in",
+            "codex has no ChatGPT session. Run `codex login` before using the subscription lane."
+          )
+        );
+      }
+    });
+  });
+}
+
+function short(err: unknown): string {
+  return (err instanceof Error ? err.message : String(err)).slice(0, DIAG_TAIL_CHARS);
+}
+
+/** Last chars of codex stderr for diagnostics (host guard redacts further). */
+function tail(text: string): string {
+  const t = text.trim();
+  if (!t) {
+    return "";
+  }
+  return t.length > DIAG_TAIL_CHARS ? `…${t.slice(-DIAG_TAIL_CHARS)}` : t;
+}
