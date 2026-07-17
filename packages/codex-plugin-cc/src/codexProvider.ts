@@ -29,7 +29,7 @@ export interface ImageProviderLike {
 }
 
 const EXT: Record<string, string> = { png: "png", webp: "webp", jpeg: "jpg" };
-const MIME: Record<string, string> = { png: "image/png", webp: "image/webp", jpeg: "image/jpeg" };
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 function buildPrompt(input: GenerateInputLike, filename: string): string {
   // Instruct codex's built-in image tool to save one file into the cwd. Kept
@@ -45,19 +45,14 @@ function buildPrompt(input: GenerateInputLike, filename: string): string {
 class CodexImageProvider implements ImageProviderLike {
   readonly kind = "plugin" as const;
 
-  #loginChecked = false;
-
   constructor(private readonly config: CodexConfig) {}
 
   async generate(input: GenerateInputLike): Promise<GenerateResultLike> {
-    if (this.config.preflightLogin && !this.#loginChecked) {
-      // Run once per provider instance; throws codex_not_logged_in if no session.
-      await checkCodexLogin(this.config, input.signal);
-      this.#loginChecked = true;
-    }
+    // Check every request: persisted auth can change while the MCP server is
+    // running, and this lane must never silently switch to API-key billing.
+    await checkCodexLogin(this.config, input.signal);
 
     const ext = EXT[input.format] ?? "png";
-    const mimeType = MIME[input.format] ?? "image/png";
     const filename = `image.${ext}`;
 
     // Fresh, isolated scratch dir per request; codex runs with this as cwd.
@@ -73,6 +68,7 @@ class CodexImageProvider implements ImageProviderLike {
       });
 
       const bytes = await this.#readImage(join(scratchDir, filename), filename);
+      const mimeType = this.#detectMimeType(bytes, filename);
 
       return {
         base64: bytes.toString("base64"),
@@ -84,6 +80,24 @@ class CodexImageProvider implements ImageProviderLike {
     } finally {
       await rm(scratchDir, { recursive: true, force: true }).catch(() => undefined);
     }
+  }
+
+  /** Derive MIME from the bytes Codex actually wrote, never from the request. */
+  #detectMimeType(bytes: Buffer, filename: string): string {
+    if (bytes.length >= 8 && bytes.subarray(0, 8).equals(PNG_MAGIC)) {
+      return "image/png";
+    }
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+      return "image/jpeg";
+    }
+    if (
+      bytes.length >= 12 &&
+      bytes.subarray(0, 4).toString("latin1") === "RIFF" &&
+      bytes.subarray(8, 12).toString("latin1") === "WEBP"
+    ) {
+      return "image/webp";
+    }
+    throw new CodexError("codex_no_image", `codex output "${filename}" is not a supported PNG, JPEG, or WebP image.`);
   }
 
   /**

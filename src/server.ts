@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { AppConfig } from "./config.js";
+import { formatForMimeType, type AppConfig } from "./config.js";
 import { toSafeMessage, validationError } from "./errors.js";
 import type { ImageProvider } from "./imageProvider.js";
 import { log } from "./logging.js";
@@ -15,7 +15,8 @@ export const SERVER_INSTRUCTIONS =
   "Use this server to generate an image with OpenAI's image model and receive it as MCP image content. " +
   "Call generate_image with a text prompt; optionally set size, quality, and output_format (each restricted to a server-side allowlist). " +
   "The server chooses the model — clients never pass a model name. " +
-  "The prompt is sent to the configured provider; with the openai provider it leaves this machine, so do not include secrets in prompts.";
+  "The result metadata distinguishes the requested output format from the actual returned image format. " +
+  "The prompt is sent to the configured provider; with the openai or plugin provider it leaves this machine, so do not include secrets in prompts.";
 
 export interface BuildServerOptions {
   config: AppConfig;
@@ -46,7 +47,7 @@ export function buildMcpServer(options: BuildServerOptions): McpServer {
       title: "Generate an image",
       description:
         "Generate an image from a text prompt using the configured OpenAI image model. " +
-        "Returns an image (base64) plus metadata. size/quality/output_format are optional and " +
+        "Returns an image (base64) plus metadata including requested and actual formats. size/quality/output_format are optional and " +
         "restricted to the server allowlist; the server picks the model.",
       inputSchema: {
         prompt: z.string().min(1).max(limits.maxPromptChars),
@@ -54,10 +55,19 @@ export function buildMcpServer(options: BuildServerOptions): McpServer {
         quality: z.string().optional(),
         output_format: z.string().optional()
       },
+      outputSchema: {
+        provider: z.enum(["mock", "openai", "plugin"]),
+        model: z.string(),
+        size: z.string(),
+        quality: z.string(),
+        requested_output_format: z.enum(["png", "webp", "jpeg"]),
+        output_format: z.enum(["png", "webp", "jpeg"]),
+        request_id: z.string()
+      },
       // Not read-only (it calls an external model), but non-destructive and open-world.
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
     },
-    async (input) => {
+    async (input, extra) => {
       const size = input.size ?? defaults.size;
       const quality = input.quality ?? defaults.quality;
       const format = input.output_format ?? defaults.format;
@@ -80,14 +90,16 @@ export function buildMcpServer(options: BuildServerOptions): McpServer {
         inFlight += 1;
         const started = Date.now();
         try {
-          const result = await provider.generate({ prompt: input.prompt, size, quality, format });
+          const result = await provider.generate({ prompt: input.prompt, size, quality, format, signal: extra.signal });
+          const actualFormat = formatForMimeType(result.mimeType);
           // Metadata only — never the prompt text or the image bytes.
           log.info("generate_image.ok", {
             provider: result.provider,
             model: result.model,
             size,
             quality,
-            output_format: format,
+            requested_output_format: format,
+            output_format: actualFormat,
             request_id: result.requestId,
             duration_ms: Date.now() - started
           });
@@ -105,7 +117,8 @@ export function buildMcpServer(options: BuildServerOptions): McpServer {
               model: result.model,
               size,
               quality,
-              output_format: format,
+              requested_output_format: format,
+              output_format: actualFormat,
               request_id: result.requestId
             }
           };

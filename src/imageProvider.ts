@@ -48,7 +48,7 @@ export const MOCK_PNG_BASE64 =
 /**
  * Offline provider. Returns a fixed 1x1 PNG regardless of the requested format,
  * so `mimeType` always describes the ACTUAL bytes (image/png). The requested
- * size/quality/output_format are still echoed by the server in structuredContent.
+ * format and actual PNG format are reported separately by the server.
  */
 export class MockImageProvider implements ImageProvider {
   readonly kind = "mock" as const;

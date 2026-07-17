@@ -2,9 +2,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../src/config.js";
 import { ImageError } from "../src/errors.js";
-import { MOCK_PNG_BASE64, createProvider } from "../src/imageProvider.js";
+import { MOCK_PNG_BASE64, createProvider, type ImageProvider } from "../src/imageProvider.js";
 import { loadLimits } from "../src/limits.js";
-import { validateGenerateResult } from "../src/providerGuard.js";
+import { guardProvider, validateGenerateResult } from "../src/providerGuard.js";
 
 const fixturePath = (name: string): string => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 
@@ -138,6 +138,33 @@ describe("guard: untrusted plugin output at request time", () => {
   it("R6: a hung plugin is aborted by the core timeout", async () => {
     const provider = await misbehaving({ IMAGE_MCP_TIMEOUT_MS: "50" });
     await expect(provider.generate({ ...input, prompt: "hang" })).rejects.toThrow(/timed out after 50ms/);
+  });
+
+  it("R6b: an MCP sender cancellation is combined with the guard timeout signal", async () => {
+    let observedAbort = false;
+    const inner: ImageProvider = {
+      kind: "plugin",
+      generate: ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          const onAbort = (): void => {
+            observedAbort = true;
+            reject(new Error("inner observed abort"));
+          };
+          if (signal?.aborted) {
+            onAbort();
+          } else {
+            signal?.addEventListener("abort", onAbort, { once: true });
+          }
+        })
+    };
+    const provider = guardProvider(inner, { ...loadLimits({}), timeoutMs: 5_000 });
+    const controller = new AbortController();
+    const generation = provider.generate({ ...input, signal: controller.signal });
+
+    controller.abort();
+
+    await expect(generation).rejects.toThrow(/cancelled by the MCP client/);
+    expect(observedAbort).toBe(true);
   });
 
   it("R8: plugin error messages are redacted before surfacing (JWT does not leak)", async () => {

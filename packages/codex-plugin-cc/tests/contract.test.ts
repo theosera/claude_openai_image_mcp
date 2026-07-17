@@ -18,12 +18,11 @@ function codexProvider(fixtureName: string) {
   return createCodexImageProvider(
     loadCodexConfig("gpt-image-2", {
       CODEX_PLUGIN_COMMAND: fixture(fixtureName),
-      CODEX_PLUGIN_ARGS: '["exec","--full-auto"]'
+      CODEX_PLUGIN_ARGS: '["exec"]'
     })
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function guard(inner: any) {
   const mod = (await import(guardModulePath)) as { guardProvider: (p: unknown, l: unknown) => any };
   return mod.guardProvider(inner, limits);
@@ -49,9 +48,10 @@ describe("output passes the host's real providerGuard", () => {
     expect(res.base64.length).toBeGreaterThan(0);
   });
 
-  it("the guard rejects a format/bytes mismatch (webp requested, PNG produced)", async () => {
+  it("the provider detects actual PNG bytes when webp was requested", async () => {
     const guarded = await guard(codexProvider("fake-codex-success.mjs"));
-    await expect(guarded.generate({ ...baseInput, format: "webp" })).rejects.toThrow(/do not match/);
+    const res = await guarded.generate({ ...baseInput, format: "webp" });
+    expect(res.mimeType).toBe("image/png");
   });
 });
 

@@ -154,10 +154,10 @@ export function runCodex(options: RunCodexOptions): Promise<RunCodexResult> {
 }
 
 /**
- * Optional preflight: run `codex login status` and fail closed if there is no
- * ChatGPT session. This surfaces the one failure mode no architecture can
- * automate away — an expired/absent subscription login needs a human to run
- * `codex login` — as a clear error before we spend a generation attempt.
+ * Run `codex login status` and fail closed unless the active authentication
+ * method is explicitly ChatGPT. Removing API-key environment variables is not
+ * sufficient because `codex login --with-api-key` persists credentials under
+ * CODEX_HOME; the status output is the authoritative billing-lane check.
  */
 export function checkCodexLogin(config: CodexConfig, signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -225,9 +225,17 @@ export function checkCodexLogin(config: CodexConfig, signal?: AbortSignal): Prom
         reject(new CodexError("codex_aborted", "codex login check was aborted by the host."));
         return;
       }
-      // codex login status prints e.g. "Logged in using ChatGPT" when authed.
-      if (code === 0 && /logged in/i.test(out) && !looksLikeNotLoggedIn(out)) {
+      // Accept only the subscription lane. Deliberately reject generic
+      // "logged in" and API-key/access-token methods.
+      if (code === 0 && /logged in using chatgpt/i.test(out) && !looksLikeNotLoggedIn(out)) {
         resolve();
+      } else if (code === 0 && /logged in/i.test(out)) {
+        reject(
+          new CodexError(
+            "codex_wrong_auth",
+            "codex-plugin-cc requires ChatGPT authentication, but Codex is logged in using another method. Run `codex logout`, then `codex login`, and verify `codex login status` says Logged in using ChatGPT."
+          )
+        );
       } else {
         reject(
           new CodexError(
