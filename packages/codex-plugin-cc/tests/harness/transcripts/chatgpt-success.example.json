@@ -1,0 +1,15 @@
+{
+  "_note": "EXAMPLE transcript (placeholder image = 1x1 PNG). Replace by recording real codex: `node tests/harness/record.mjs > tests/harness/transcripts/chatgpt-success.json`. Committing an OBSERVED transcript is what makes the fake observation-derived; periodically re-record to drift-check against real codex.",
+  "login": {
+    "stdout": "Logged in using ChatGPT\n",
+    "stderr": "",
+    "exit": 0
+  },
+  "exec": {
+    "stdout": "Saved image to image.png\n",
+    "stderr": "",
+    "exit": 0,
+    "writeFileFromPrompt": true,
+    "fileBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+  }
+}

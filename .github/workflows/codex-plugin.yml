@@ -1,0 +1,63 @@
+name: codex-plugin-cc CI
+
+# Dedicated job for the detachable, non-core package. It is intentionally
+# SEPARATE from the core "Node.js CI" job: the core's build/CI/audit scope stays
+# clean (no workspace, no dependency on this package), while the package's own
+# build / typecheck / tests still run in CI. Closes the coverage gap where the
+# package's tests otherwise ran only on a developer's machine.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "packages/codex-plugin-cc/**"
+      - ".github/workflows/codex-plugin.yml"
+      - "src/**" # the package's contract tests load the built core
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "packages/codex-plugin-cc/**"
+      - ".github/workflows/codex-plugin.yml"
+      - "src/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codex-plugin:
+    runs-on: ubuntu-latest
+    steps:
+      # Third-party actions pinned to a full 40-char SHA (+ version comment),
+      # matching the core workflow's supply-chain posture.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.x
+          cache: pnpm
+
+      # The package's contract tests import the BUILT core (file:.. dev dep +
+      # the real providerGuard from dist), so build the core first.
+      - name: Install & build core
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+
+      - name: Install, typecheck, build & test the package
+        working-directory: packages/codex-plugin-cc
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run typecheck
+          pnpm run build
+          pnpm test
+        # NOTE: the real-codex E2E (tests/real-codex.e2e.test.ts) is opt-in via
+        # CODEX_E2E=1 and stays skipped here — it needs an interactive `codex
+        # login` and consumes ChatGPT-subscription quota, so it is never run in
+        # CI. Run it locally against real codex; see tests/README.md.
