@@ -144,3 +144,17 @@ export function mimeTypeForFormat(format: string): string {
       throw configError(`No MIME type mapping for format "${format}".`);
   }
 }
+
+/** Map an actual MCP ImageContent MIME type back to its canonical format name. */
+export function formatForMimeType(mimeType: string): string {
+  switch (mimeType) {
+    case "image/png":
+      return "png";
+    case "image/webp":
+      return "webp";
+    case "image/jpeg":
+      return "jpeg";
+    default:
+      throw configError(`No output format mapping for MIME type "${mimeType}".`);
+  }
+}

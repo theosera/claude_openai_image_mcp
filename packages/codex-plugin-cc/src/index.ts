@@ -22,10 +22,7 @@ import { loadCodexConfig } from "./config.js";
 export const providerApiVersion = 1;
 
 /** Factory called by the host's loader. `ctx.model` is advisory for this lane. */
-export function createImageProvider(ctx: {
-  model: string;
-  limits?: { maxImageBytes?: number };
-}): ImageProviderLike {
+export function createImageProvider(ctx: { model: string; limits?: { maxImageBytes?: number } }): ImageProviderLike {
   const config = loadCodexConfig(ctx.model, process.env, ctx.limits?.maxImageBytes);
   return createCodexImageProvider(config);
 }

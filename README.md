@@ -31,7 +31,10 @@ The **server** chooses the model; clients never pass a model name. Requests
 outside the allowlist are rejected *before* any provider call.
 
 Returns MCP image content `{ type: "image", data: <base64>, mimeType }` plus
-`structuredContent` with `{ provider, model, size, quality, output_format, request_id }`.
+schema-validated `structuredContent` with
+`{ provider, model, size, quality, requested_output_format, output_format, request_id }`.
+`requested_output_format` records the request; `output_format` describes the
+bytes actually returned and always agrees with `mimeType`.
 
 ## Quick start
 
@@ -121,8 +124,8 @@ lane is strictly opt-in and **detachable by design**:
 A reference implementation lives in
 [`packages/codex-plugin-cc`](packages/codex-plugin-cc) — the ChatGPT-subscription
 lane (drives the Codex CLI, no API key). It is a **separate, non-core package**:
-the core never imports it and its build/CI/audit scope excludes it, so it stays
-detachable and does not affect the core's supply chain.
+the core never imports it, and a dedicated CI job builds, audits, and tests it
+separately so it stays detachable from the core dependency graph.
 
 ## Security
 

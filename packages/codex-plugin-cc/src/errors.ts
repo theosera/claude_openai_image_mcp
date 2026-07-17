@@ -7,6 +7,7 @@
 export type CodexErrorCode =
   | "codex_not_found" // the codex binary could not be spawned (not installed / not on PATH)
   | "codex_not_logged_in" // codex has no ChatGPT session (run `codex login`)
+  | "codex_wrong_auth" // codex is authenticated, but not through ChatGPT
   | "codex_failed" // codex exited non-zero for another reason
   | "codex_no_image" // codex exited 0 but produced no image file
   | "codex_aborted"; // the host aborted the request (timeout / cancellation)

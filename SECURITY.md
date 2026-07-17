@@ -28,7 +28,8 @@ OpenAI Images API. It is designed to fail closed.
   bounded via env (provisional defaults; see README).
 - **Provider output is untrusted.** A uniform guard validates every result
   (strict base64, magic-byte/MIME match, decoded-size cap) and enforces the
-  request timeout with an abort signal, regardless of provider.
+  request timeout and MCP sender cancellation with a combined abort signal,
+  regardless of provider.
 
 ## Plugin lane (experimental)
 
@@ -40,6 +41,12 @@ boundary. Plugin failures are surfaced redacted and truncated; plugins cannot
 impersonate the built-in lanes; there is no automatic fallback to the
 API-billing lane. Keep `OPENAI_API_KEY` out of the plugin lane's environment
 (the server warns when both are present).
+
+The reference `codex-plugin-cc` additionally runs its child Codex process in an
+ephemeral workspace-write sandbox with user config ignored and an allowlisted
+environment. It checks `codex login status` before every request and accepts only
+ChatGPT authentication; persisted API-key authentication fails closed before
+generation.
 
 ## Out of scope (by design, this phase)
 

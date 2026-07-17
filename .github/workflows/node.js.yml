@@ -50,3 +50,52 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run build
       - run: pnpm test
+
+  codex-plugin-cc:
+    name: Codex plugin (standalone package)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271  # v6.0.9
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            packages/codex-plugin-cc/pnpm-lock.yaml
+
+      # Build the host contract first; the standalone package's contract tests
+      # import the host's generated provider and guard modules.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: pnpm exec oxlint packages/codex-plugin-cc/src packages/codex-plugin-cc/tests
+      - run: pnpm exec eslint packages/codex-plugin-cc/src packages/codex-plugin-cc/tests
+      - run: pnpm exec prettier --check packages/codex-plugin-cc/src packages/codex-plugin-cc/tests
+
+      - name: Install plugin dependencies
+        working-directory: packages/codex-plugin-cc
+        run: pnpm install --frozen-lockfile
+
+      - name: Audit plugin dependencies
+        continue-on-error: true
+        working-directory: packages/codex-plugin-cc
+        run: pnpm audit --audit-level moderate
+
+      - name: Typecheck plugin
+        working-directory: packages/codex-plugin-cc
+        run: pnpm run typecheck
+
+      - name: Build plugin
+        working-directory: packages/codex-plugin-cc
+        run: pnpm run build
+
+      - name: Test plugin contract and runtime
+        working-directory: packages/codex-plugin-cc
+        run: pnpm test

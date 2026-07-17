@@ -11,12 +11,14 @@ export interface CodexConfig {
   command: string;
   /**
    * Base args before the prompt. Default
-   * ["exec", "--full-auto", "--skip-git-repo-check"]. `codex exec` is the
-   * non-interactive entrypoint; --full-auto lets it write the image file without
-   * an approval prompt; --skip-git-repo-check is REQUIRED here because we run
-   * codex from a fresh temp scratch dir (not a git repo) and codex exec
-   * otherwise refuses to run outside a repository. Override per your codex
-   * version if needed.
+   * ["exec", "--sandbox", "workspace-write", "--ephemeral",
+   * "--ignore-user-config", "--skip-git-repo-check"]. `codex exec` is the
+   * non-interactive entrypoint. The explicit sandbox permits writing only in the
+   * fresh scratch workspace; ephemeral mode avoids persisting prompts/session
+   * rollouts; ignoring user config prevents unrelated configured MCP servers or
+   * automation settings from entering this provider boundary. The git-repo
+   * check must be skipped because the scratch directory is intentionally not a
+   * repository. Override per your Codex version if needed.
    */
   baseArgs: string[];
   /** Directory under which each request gets a fresh scratch subdir. Default os.tmpdir(). */
@@ -27,8 +29,6 @@ export interface CodexConfig {
    * NOT client-pinnable, so this is descriptive, not authoritative.
    */
   modelLabel: string;
-  /** If true, run `codex login status` once before the first generation. Default false. */
-  preflightLogin: boolean;
   /** Grace period (ms) between SIGTERM and SIGKILL when the host aborts. Default 2000. */
   killGraceMs: number;
   /**
@@ -39,27 +39,53 @@ export interface CodexConfig {
   maxImageBytes: number;
 }
 
-// API-key auth vars codex honors, matched case-insensitively. Stripped so the
-// subscription lane can never silently fall back to per-image API billing:
-// OPENAI_API_KEY (SDK-style) and CODEX_API_KEY (codex exec's own API-key var).
-const API_KEY_ENV_NAMES = new Set(["OPENAI_API_KEY", "CODEX_API_KEY"]);
+// Pass only process/runtime state that Codex needs to locate its executable,
+// persisted ChatGPT login, temporary directory, locale, and TLS roots. In
+// particular, do not pass arbitrary host secrets or any token/key variables to
+// the general-purpose child agent. Match case-insensitively for Windows.
+const CHILD_ENV_ALLOWLIST = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TERM",
+  "COLORTERM",
+  "CODEX_HOME",
+  "CODEX_SQLITE_HOME",
+  "CODEX_CA_CERTIFICATE",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "SYSTEMROOT",
+  "COMSPEC",
+  "PATHEXT",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA"
+]);
 
 const DEFAULT_MAX_IMAGE_BYTES = 15_728_640; // 15 MiB — matches the host default.
 
 /**
- * Env handed to EVERY codex child, with every API-key auth var stripped
- * (case-insensitively, since env lookup is case-insensitive on Windows). This
- * lane promises ChatGPT-subscription usage only; leaving a key in the child's
- * env would let codex authenticate by API key and bill per image.
+ * Minimal env handed to EVERY Codex child. Authentication comes from Codex's
+ * persisted ChatGPT session under CODEX_HOME/HOME; direct API keys, access
+ * tokens, provider credentials, and unrelated host secrets are never inherited.
  */
 export function codexChildEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const clone = { ...env };
-  for (const key of Object.keys(clone)) {
-    if (API_KEY_ENV_NAMES.has(key.toUpperCase())) {
-      delete clone[key];
+  const childEnv: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined && CHILD_ENV_ALLOWLIST.has(key.toUpperCase())) {
+      childEnv[key] = value;
     }
   }
-  return clone;
+  return childEnv;
 }
 
 function splitArgs(raw: string | undefined, fallback: string[]): string[] {
@@ -67,7 +93,7 @@ function splitArgs(raw: string | undefined, fallback: string[]): string[] {
   if (!trimmed) {
     return fallback;
   }
-  // Accept a JSON array (["exec","--full-auto"]) or a plain space-separated string.
+  // Accept a JSON array (["exec","--ephemeral"]) or a plain space-separated string.
   if (trimmed.startsWith("[")) {
     try {
       const parsed = JSON.parse(trimmed);
@@ -96,12 +122,18 @@ export function loadCodexConfig(
   const maxImageBytes = Number.isInteger(envCap) && envCap > 0 ? envCap : hostMaxImageBytes;
   return {
     command: env.CODEX_PLUGIN_COMMAND?.trim() || "codex",
-    baseArgs: splitArgs(env.CODEX_PLUGIN_ARGS, ["exec", "--full-auto", "--skip-git-repo-check"]),
+    baseArgs: splitArgs(env.CODEX_PLUGIN_ARGS, [
+      "exec",
+      "--sandbox",
+      "workspace-write",
+      "--ephemeral",
+      "--ignore-user-config",
+      "--skip-git-repo-check"
+    ]),
     tmpDir: env.CODEX_PLUGIN_TMPDIR?.trim() || os.tmpdir(),
     modelLabel:
       env.CODEX_PLUGIN_MODEL_LABEL?.trim() ||
       `gpt-image-2 (codex subscription; backend-decided, advisory host=${hostModel})`,
-    preflightLogin: /^(1|true|yes)$/i.test(env.CODEX_PLUGIN_PREFLIGHT_LOGIN?.trim() ?? ""),
     killGraceMs: 2000,
     maxImageBytes
   };

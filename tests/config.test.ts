@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig, mimeTypeForFormat } from "../src/config.js";
+import { formatForMimeType, loadConfig, mimeTypeForFormat } from "../src/config.js";
 import { ImageError } from "../src/errors.js";
 
 // A minimal env that produces a valid mock config.
@@ -67,5 +67,17 @@ describe("mimeTypeForFormat", () => {
 
   it("throws for an unknown format", () => {
     expect(() => mimeTypeForFormat("gif")).toThrow(ImageError);
+  });
+});
+
+describe("formatForMimeType", () => {
+  it("maps supported image MIME types to canonical format names", () => {
+    expect(formatForMimeType("image/png")).toBe("png");
+    expect(formatForMimeType("image/webp")).toBe("webp");
+    expect(formatForMimeType("image/jpeg")).toBe("jpeg");
+  });
+
+  it("fails closed for an unsupported MIME type", () => {
+    expect(() => formatForMimeType("image/gif")).toThrow(ImageError);
   });
 });

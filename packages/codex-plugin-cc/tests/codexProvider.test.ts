@@ -12,19 +12,23 @@ const baseInput = { prompt: "a red circle", size: "1024x1024", quality: "low", f
 function provider(fixtureName: string, extraEnv: NodeJS.ProcessEnv = {}) {
   const config = loadCodexConfig("gpt-image-2", {
     CODEX_PLUGIN_COMMAND: fixture(fixtureName),
-    CODEX_PLUGIN_ARGS: '["exec","--full-auto"]',
+    CODEX_PLUGIN_ARGS: '["exec"]',
     ...extraEnv
   });
   return createCodexImageProvider(config);
 }
 
 describe("config", () => {
-  it("defaults to `codex exec --full-auto --skip-git-repo-check` and needs no API key", () => {
+  it("defaults to an isolated, ephemeral workspace-write Codex exec", () => {
     const c = loadCodexConfig("gpt-image-2", {});
-    expect(c.command).toBe("codex");
-    // --skip-git-repo-check is required: we run codex from a non-repo temp dir.
-    expect(c.baseArgs).toEqual(["exec", "--full-auto", "--skip-git-repo-check"]);
-    expect(c.preflightLogin).toBe(false);
+    expect(c.baseArgs).toEqual([
+      "exec",
+      "--sandbox",
+      "workspace-write",
+      "--ephemeral",
+      "--ignore-user-config",
+      "--skip-git-repo-check"
+    ]);
   });
 
   it("parses CODEX_PLUGIN_ARGS as JSON or a plain string", () => {
@@ -32,17 +36,25 @@ describe("config", () => {
     expect(loadCodexConfig("m", { CODEX_PLUGIN_ARGS: "exec --yolo" }).baseArgs).toEqual(["exec", "--yolo"]);
   });
 
-  it("codexChildEnv strips OPENAI_API_KEY and CODEX_API_KEY, case-insensitively", () => {
+  it("codexChildEnv allowlists runtime/auth-location vars and drops host secrets", () => {
     const env = codexChildEnv({
+      PATH: "/usr/bin",
+      HOME: "/tmp/home",
+      CODEX_HOME: "/tmp/codex-home",
       OPENAI_API_KEY: "sk-gone",
       CODEX_API_KEY: "sk-also-gone",
+      CODEX_ACCESS_TOKEN: "token-gone",
       openai_api_key: "sk-lowercase-gone",
-      KEEP: "yes"
+      AWS_SECRET_ACCESS_KEY: "secret-gone",
+      KEEP: "also-gone"
     });
+    expect(env).toMatchObject({ PATH: "/usr/bin", HOME: "/tmp/home", CODEX_HOME: "/tmp/codex-home" });
     expect(env.OPENAI_API_KEY).toBeUndefined();
     expect(env.CODEX_API_KEY).toBeUndefined();
+    expect(env.CODEX_ACCESS_TOKEN).toBeUndefined();
     expect(env.openai_api_key).toBeUndefined();
-    expect(env.KEEP).toBe("yes");
+    expect(env.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(env.KEEP).toBeUndefined();
   });
 });
 
@@ -56,6 +68,11 @@ describe("CodexImageProvider.generate", () => {
     expect(res.requestId).toMatch(/^codex-/);
     // Model is an honest, advisory label — never a pinned lie.
     expect(res.model).toMatch(/codex/i);
+  });
+
+  it("reports the actual PNG MIME even when WebP was requested", async () => {
+    const res = await provider("fake-codex-success.mjs").generate({ ...baseInput, format: "webp" });
+    expect(res.mimeType).toBe("image/png");
   });
 
   it("declares kind 'plugin' (the host guard requires this)", () => {
@@ -113,16 +130,22 @@ describe("CodexImageProvider.generate", () => {
   });
 });
 
-describe("preflight login check", () => {
-  it("passes through to generate when logged in", async () => {
-    const res = await provider("fake-codex-success.mjs", { CODEX_PLUGIN_PREFLIGHT_LOGIN: "1" }).generate(baseInput);
+describe("mandatory ChatGPT login check", () => {
+  it("passes through to generate when logged in through ChatGPT", async () => {
+    const res = await provider("fake-codex-success.mjs").generate(baseInput);
     expect(res.provider).toBe("plugin");
   });
 
   it("fails closed before generating when not logged in", async () => {
-    await expect(
-      provider("fake-codex-not-logged-in.mjs", { CODEX_PLUGIN_PREFLIGHT_LOGIN: "1" }).generate(baseInput)
-    ).rejects.toMatchObject({ code: "codex_not_logged_in" });
+    await expect(provider("fake-codex-not-logged-in.mjs").generate(baseInput)).rejects.toMatchObject({
+      code: "codex_not_logged_in"
+    });
+  });
+
+  it("rejects persisted API-key authentication even with no key in the child env", async () => {
+    await expect(provider("fake-codex-api-key-login.mjs").generate(baseInput)).rejects.toMatchObject({
+      code: "codex_wrong_auth"
+    });
   });
 
   it("strips API keys from the login-check child (no API-key auth in this lane)", async () => {
@@ -133,8 +156,7 @@ describe("preflight login check", () => {
     process.env.CODEX_API_KEY = "sk-also-leftover";
     try {
       const config = loadCodexConfig("gpt-image-2", {
-        CODEX_PLUGIN_COMMAND: fixture("fake-codex-login-envcheck.mjs"),
-        CODEX_PLUGIN_PREFLIGHT_LOGIN: "1"
+        CODEX_PLUGIN_COMMAND: fixture("fake-codex-login-envcheck.mjs")
       });
       // Login preflight runs and must succeed (keys stripped); generation then
       // fails codex_no_image because this fixture writes no file — proving the

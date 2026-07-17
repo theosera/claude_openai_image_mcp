@@ -9,8 +9,9 @@ import { redact } from "./logging.js";
  * plugin in the chain, "the provider behaves" is no longer an invariant the
  * core can assume, so the core enforces it here instead:
  *
- *  - timeout: generate() is raced against limits.timeoutMs and aborted via
- *    AbortSignal (a hung plugin/child process cannot wedge the server);
+ *  - cancellation/timeout: the MCP sender signal is combined with
+ *    limits.timeoutMs and passed downstream (a cancelled or hung child process
+ *    cannot keep consuming resources indefinitely);
  *  - result validation: strict base64, decoded-size cap, MIME allowlist, and
  *    magic-byte check (bytes must BE what the mimeType claims — no SVG/HTML
  *    smuggling); metadata strings are sanitized and length-capped;
@@ -152,18 +153,38 @@ class GuardedImageProvider implements ImageProvider {
   }
 
   async generate(input: GenerateInput): Promise<GenerateResult> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.limits.timeoutMs);
+    if (input.signal?.aborted) {
+      throw providerFailed("Generation cancelled by the MCP client.");
+    }
+
+    const timeoutController = new AbortController();
+    const timer = setTimeout(() => timeoutController.abort(), this.limits.timeoutMs);
+    const combinedSignal = input.signal
+      ? AbortSignal.any([input.signal, timeoutController.signal])
+      : timeoutController.signal;
+    const timeoutWaiter = abortRejection(timeoutController.signal, () =>
+      providerFailed(`Generation timed out after ${this.limits.timeoutMs}ms.`)
+    );
+    const cancellationWaiter = input.signal
+      ? abortRejection(input.signal, () => providerFailed("Generation cancelled by the MCP client."))
+      : undefined;
     try {
       // Async wrapper so a synchronously-throwing plugin still rejects.
-      const generation = (async () => this.inner.generate({ ...input, signal: controller.signal }))();
+      const generation = (async () => this.inner.generate({ ...input, signal: combinedSignal }))();
       // A rejection that loses the race (or lands after timeout) must not
       // become an unhandled rejection and crash the whole server.
       generation.catch(() => undefined);
 
-      const raw = await Promise.race([generation, timeoutRejection(controller.signal, this.limits.timeoutMs)]);
+      const contenders: Promise<GenerateResult>[] = [generation, timeoutWaiter.promise];
+      if (cancellationWaiter) {
+        contenders.push(cancellationWaiter.promise);
+      }
+      const raw = await Promise.race(contenders);
       return validateGenerateResult(raw, this.limits, this.inner.kind, input.prompt);
     } catch (err) {
+      if (input.signal?.aborted && !timeoutController.signal.aborted) {
+        throw providerFailed("Generation cancelled by the MCP client.");
+      }
       if (err instanceof ImageError) {
         // Typed errors are safe by construction EXCEPT for upstream text they
         // may embed (which can quote the prompt) — scrub before rethrowing.
@@ -174,16 +195,32 @@ class GuardedImageProvider implements ImageProvider {
       throw providerFailed(`Provider "${this.inner.kind}" failed: ${message}`);
     } finally {
       clearTimeout(timer);
+      timeoutWaiter.dispose();
+      cancellationWaiter?.dispose();
     }
   }
 }
 
-function timeoutRejection(signal: AbortSignal, ms: number): Promise<never> {
-  return new Promise((_, reject) => {
-    signal.addEventListener("abort", () => reject(providerFailed(`Generation timed out after ${ms}ms.`)), {
-      once: true
-    });
+interface AbortWaiter {
+  promise: Promise<never>;
+  dispose(): void;
+}
+
+/** Build a removable abort waiter so a long-lived client signal retains no request closures. */
+function abortRejection(signal: AbortSignal, error: () => ImageError): AbortWaiter {
+  let onAbort = (): void => undefined;
+  const promise = new Promise<never>((_, reject) => {
+    onAbort = (): void => reject(error());
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
   });
+  return {
+    promise,
+    dispose: () => signal.removeEventListener("abort", onAbort)
+  };
 }
 
 /** Wrap a provider with the uniform guard. Applied to ALL providers in createProvider. */

@@ -16,9 +16,19 @@ export default tseslint.config(
   },
   // Tests use some loose typing for fixtures/payloads.
   {
-    files: ["tests/**/*.ts"],
+    files: ["**/tests/**/*.ts"],
     rules: {
       "@typescript-eslint/no-explicit-any": "off"
+    }
+  },
+  {
+    files: ["**/tests/fixtures/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        Buffer: "readonly",
+        process: "readonly",
+        setInterval: "readonly"
+      }
     }
   },
   prettier
