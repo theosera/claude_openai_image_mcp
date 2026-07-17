@@ -18,6 +18,10 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// Reuse the SAME env sanitizer production uses (requires `pnpm run build`
+// first, per this file's header). Recording with the caller's full env would
+// capture a different auth/config boundary than the plugin actually runs under.
+import { codexChildEnv } from "../../dist/config.js";
 
 const COMMAND = process.env.CODEX_PLUGIN_COMMAND?.trim() || "codex";
 // Keep in lockstep with src/config.ts loadCodexConfig() default baseArgs.
@@ -35,7 +39,9 @@ const FILENAME = "image.png";
 
 function run(args, cwd) {
   return new Promise((resolve, reject) => {
-    const child = spawn(COMMAND, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    // Same stripped env as production (login preflight + generation): no API
+    // keys, tokens, or unrelated host secrets reach the recorded codex run.
+    const child = spawn(COMMAND, args, { cwd, env: codexChildEnv(), stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (c) => (stdout += c.toString("utf8")));
