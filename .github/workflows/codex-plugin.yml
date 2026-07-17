@@ -12,13 +12,23 @@ on:
     paths:
       - "packages/codex-plugin-cc/**"
       - ".github/workflows/codex-plugin.yml"
-      - "src/**" # the package's contract tests load the built core
+      # The package's contract tests load the built core AND the host's export
+      # surface (`claude-openai-image-mcp/provider`), so changes to the core
+      # sources, the root package's exports/metadata, or install determinism
+      # must also run this job.
+      - "src/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "tsconfig.json"
   pull_request:
     branches: ["main"]
     paths:
       - "packages/codex-plugin-cc/**"
       - ".github/workflows/codex-plugin.yml"
       - "src/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "tsconfig.json"
 
 permissions:
   contents: read
