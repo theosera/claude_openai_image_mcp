@@ -21,11 +21,14 @@ export default tseslint.config(
       "@typescript-eslint/no-explicit-any": "off"
     }
   },
+  // Fake `codex` binaries (fixtures) and the record/replay harness are standalone
+  // Node scripts: give them Node runtime globals.
   {
-    files: ["**/tests/fixtures/**/*.mjs"],
+    files: ["**/tests/fixtures/**/*.mjs", "**/tests/harness/**/*.mjs"],
     languageOptions: {
       globals: {
         Buffer: "readonly",
+        URL: "readonly",
         process: "readonly",
         setInterval: "readonly"
       }

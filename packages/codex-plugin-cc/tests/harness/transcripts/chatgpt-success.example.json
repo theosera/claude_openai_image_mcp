@@ -1,0 +1,16 @@
+{
+  "$schema": "codex-transcript/v1",
+  "note": "Seed transcript for the record/replay harness. The exec bytes are the canonical 1x1 transparent PNG so CI can replay a valid image deterministically with no network and no ChatGPT subscription. Re-record from a real codex run with `node tests/harness/record.mjs` to capture a full-size image; the replay driver (transcript-codex.mjs) reads whatever bytes this file carries.",
+  "recorded": {
+    "command": "codex",
+    "execArgs": ["exec", "--sandbox", "workspace-write", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check"]
+  },
+  "login": { "stdout": "Logged in using ChatGPT\n", "stderr": "", "exitCode": 0 },
+  "exec": {
+    "stdout": "Saved image to image.png\n",
+    "stderr": "",
+    "exitCode": 0,
+    "fileBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "fileMimeHint": "image/png"
+  }
+}
